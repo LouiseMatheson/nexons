@@ -483,7 +483,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
             continue
 
         fasta_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
-        sequence = chromosomes[gene["chrom"]][(gene["start"]-1):gene["end"]]
+        sequence = chromosomes[gene["chrom"]][(gene["start"]-5001):(gene["end"]+5000)]
 
         with open(fasta_file[1],"w") as out:
             out.write(f">{gene['name']}\n{sequence}\n")
@@ -565,7 +565,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
 
 def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_coverage, map_threshold):
 
-    position_offset = gene["start"]
+    position_offset = gene["start"]-5000
     # We need to write the read into a file
     read_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
 
@@ -595,7 +595,8 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
     reverse_exon_first = False
 
     with open (read_file[1]+".dat") as dat_file:
-        locations = [] 
+        locations = []
+        cDNA_locations = []
         for line in dat_file:
             #print(line, end=None)
         
@@ -659,27 +660,59 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
             locations.append([start,end])
         
             start_end_cDNA = sections[1].strip().split(" ")
-            if count == 1 or (count == 2 and reverse_exon_first == True): # if first exon will be removed, replace start_cDNA
-                start_cDNA = int(start_end_cDNA[0])
-            if not reverse_exon_index == count: # if final coordinates removed, this will prevent end_cDNA being updated for those coordinates
-                end_cDNA = int(start_end_cDNA[-1])
-        cDNA_length = end_cDNA - start_cDNA
+            cDNA_locations.append([int(start_end_cDNA[0]), int(start_end_cDNA[-1])])
+            #if count == 1 or (count == 2 and reverse_exon_first == True): # if first exon will be removed, replace start_cDNA
+            #    start_cDNA = int(start_end_cDNA[0])
+            #if not reverse_exon_index == count: # if final coordinates removed, this will prevent end_cDNA being updated for those coordinates
+            #    end_cDNA = int(start_end_cDNA[-1])
+        
     
     # Clean up the chexons output
     os.unlink(read_file[1]+".dat")
     os.remove(read_file[1])
-
-    # Check the splice junctions don't jump backwards
+    
+    
+    # Remove exons from the end that look like polyA tails
+    # Work backwards through exons until we find one that looks real (either known splice acceptor, or below threshold for repeated sequences indicative of polyA)
+    # Frequently occurring sequences are:
+    # AAAAAAAAAA
+    # TTTTTTTTTT (including in forwards orientation)
+    # ACACACACAC
+    # GTGTGTGTGT (both orientations)
+    # since this is two patterns that occur in reverse complement (but both appear in both orientations), it doesn't matter which strand we check
+    
+    polyA_align = True
+    exonNumber = 1
+    
+    while polyA_align and len(locations) > 0:
+        if any(abs(acceptor - locations[-1][0]) <= options.flexibility for acceptor in gene["splice_acceptors"]):
+            polyA_align = False
+        else:
+            exon_seq = sequence[cDNA_locations[-1][0]:cDNA_locations[-1][-1]]
+            if (exon_seq.count("AAAA") + exon_seq.count("TTTT") + exon_seq.count("ACAC") + exon_seq.count("GTGT")) > (0.15*len(exon_seq)):
+                # this equates to 60% made up of those repeated sequences, since each is 4 bases long - but will miss ends of matches unless multiple of 4 so don't want percentage too high
+                debug(f"Likely polyA mapping detected at exon {exonNumber} from end. Excluding coordinates ({gene['chrom']}{locations[-1]})")
+                excluded = locations.pop()
+                excluded_cdna = cDNA_locations.pop()
+                exonNumber += 1
+                
+            else:
+                polyA_align = False
+                
+    
+    # Check the splice junctions don't jump backwards - should now be less since we should already catch those that jump back to map polyA
     # need to do this BEFORE checking coverage and number of exons
     if reverse_exon_index ==len(locations) and reverse_exon_first == False:
         debug(f"Reverse splicing or mapping detected for final exon only: removing final exon coordinates")
         excluded = locations.pop()
+        excluded_cdna = cDNA_locations.pop()
 
-    elif reverse_exon_first == True and reverse_exon_index == 0:
+    elif reverse_exon_first == True and reverse_exon_index == 0 and len(locations) > 0: # last test just in case all exons removed already
         debug(f"Reverse splicing or mapping detected for first exon only: removing first exon coordinates")
         excluded = locations.pop(0)
+        excluded_cdna = cDNA_locations.pop(0)
 
-    elif reverse_exon_index > 0: # this will pick up any where reverse splicing/mapping is in a middle exon, or >1 exon (including first+last)
+    elif 0 < reverse_exon_index <= len(locations): # this will pick up any where reverse splicing/mapping is in a middle exon, or >1 exon (including first+last) - unless already removed as identified as polyA
         debug(f"Discarding sequence as reverse splicing detected (junction {reverse_exon_index})")
         return "FAIL: Reverse splicing or mapping (middle or >1 exon)"
 
@@ -688,8 +721,8 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
     if len(locations) < min_exons:
         debug(f"Discarding sequence as number of exons found {len(locations)} is lower than the threshold {min_exons}")
         return "FAIL: Not enough exons"
-
-
+    
+    cDNA_length = cDNA_locations[-1][-1] - cDNA_locations[0][0]
     #print(f"cDNA length = {cDNA_length}, full sequence length = {full_sequence_length}")
 
     proportion_mapped = cDNA_length/full_sequence_length
@@ -892,6 +925,7 @@ def read_gtf(gtf_file, gene_filter):
             gene_name=None
             transcript_id=None
             transcript_name=None
+            exon_number=None
 
             for comment in comments:
                 if comment.strip().startswith("gene_id"):
@@ -905,6 +939,9 @@ def read_gtf(gtf_file, gene_filter):
                           
                 if comment.strip().startswith("transcript_name"):
                     transcript_name=comment.strip()[17:].replace('"','').strip()
+                    
+                if comment.strip().startswith("exon_number"):
+                    exon_number=int(comment.strip()[12:].replace('"','').strip())
                     
             if gene_id is None and gene_name is None:
                 warn(f"No gene name or id found for exon at {chrom}:{start}-{end}")
@@ -947,7 +984,8 @@ def read_gtf(gtf_file, gene_filter):
                     "end" : end,
                     "strand": strand,
                     "transcripts": {
-                    }
+                    },
+                    "splice_acceptors" : []
                 }
             else:
                 if start < genes[gene_id]["start"]:
@@ -975,6 +1013,13 @@ def read_gtf(gtf_file, gene_filter):
 
 
             genes[gene_id]["transcripts"][transcript_id]["exons"].append([start,end])
+            
+            if strand == "+":
+                if exon_number > 1 and not start in genes[gene_id]["splice_acceptors"]:
+                    genes[gene_id]["splice_acceptors"].append(start)
+            else:
+                if exon_number > 1 and not end in genes[gene_id]["splice_acceptors"]:
+                    genes[gene_id]["splice_acceptors"].append(end)
 
 
     return genes
