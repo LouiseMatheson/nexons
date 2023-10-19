@@ -697,10 +697,6 @@ def get_chexons_segment_string (sequence, genomic_file, gene, gene_info, min_exo
         
             start_end_cDNA = sections[1].strip().split(" ")
             cDNA_locations.append([int(start_end_cDNA[0]), int(start_end_cDNA[-1])])
-            #if count == 1 or (count == 2 and reverse_exon_first == True): # if first exon will be removed, replace start_cDNA
-            #    start_cDNA = int(start_end_cDNA[0])
-            #if not reverse_exon_index == count: # if final coordinates removed, this will prevent end_cDNA being updated for those coordinates
-            #    end_cDNA = int(start_end_cDNA[-1])
         
     
     # Clean up the chexons output
@@ -737,20 +733,17 @@ def get_chexons_segment_string (sequence, genomic_file, gene, gene_info, min_exo
                 
     
     # Check the splice junctions don't jump backwards - should now be less since we should already catch those that jump back to map polyA
-    # need to do this BEFORE checking coverage and number of exons
     if reverse_exon_index ==len(locations) and reverse_exon_first == False:
-        debug(f"Reverse splicing or mapping detected for final exon only: removing final exon coordinates")
-        excluded = locations.pop()
-        excluded_cdna = cDNA_locations.pop()
+        debug(f"Discarding sequence as reverse splicing detected (final exon/junction only)")
+        return "FAIL: Reverse splicing or mapping (last exon)"
 
     elif reverse_exon_first == True and reverse_exon_index == 0 and len(locations) > 0: # last test just in case all exons removed already
-        debug(f"Reverse splicing or mapping detected for first exon only: removing first exon coordinates")
-        excluded = locations.pop(0)
-        excluded_cdna = cDNA_locations.pop(0)
+        debug(f"Discarding sequence as reverse splicing detected (first exon/junction only)")
+        return "FAIL: Reverse splicing or mapping (first exon)"
 
     elif 0 < reverse_exon_index <= len(locations): # this will pick up any where reverse splicing/mapping is in a middle exon, or >1 exon (including first+last) - unless already removed as identified as polyA
         debug(f"Discarding sequence as reverse splicing detected (junction {reverse_exon_index})")
-        return "FAIL: Reverse splicing or mapping (middle or >1 exon)"
+        return "FAIL: Reverse splicing or mapping (middle/>1 exon)"
 
     # Check that we've got enough exons to keep this
     # Do this before coverage in case there are 0 locations left following reverse splice removal
