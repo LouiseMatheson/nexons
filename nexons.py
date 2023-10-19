@@ -141,7 +141,7 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
         splice_counts[gene] = {}
         
         # we also could have multiple IDs for a gene, need to work through these one at a time to pull out known isoforms
-        gene_ids = gene.split(";")
+        gene_ids = gene.split(":")
         
         # simplifying the splice counts - genes_transcripts_exons[gene_id]["transcripts"] contains a load of info for that transcript - a dict of start, stop, exons, splice_patterns (maybe it doesn't need that but we'll leave it for now).
        
@@ -340,9 +340,9 @@ def write_output(data, gene_annotations, file, mincount, splice_info):
                 if splices[splice] >= mincount or options.report_all:
                     passed_splices.append(splice)
                     
-            # For genes which have >1 Ensembl ID, these are all included in gene, separated with ; (assuming same chromsome and strand)
+            # For genes which have >1 Ensembl ID, these are all included in gene, separated with : (assuming same chromsome and strand)
             # Split these and use the first to access name, chromosome and strand
-            gene_ids = gene.split(";")
+            gene_ids = gene.split(":")
 
             # Now we can go through the splices for all BAM files
             for splice in passed_splices:
@@ -398,9 +398,9 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
         lines_written = 0
 
         for gene in genes:
-            # For genes which have >1 Ensembl ID, these are all included in gene, separated with ; (assuming same chromsome and strand)
+            # For genes which have >1 Ensembl ID, these are all included in gene, separated with : (assuming same chromsome and strand)
             # Split these and use the first to access name, chromosome and strand
-            gene_ids = gene.split(";")
+            gene_ids = gene.split(":")
             
             splices = set() 
 
@@ -593,7 +593,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
         # Clean up the gene sequence file
         os.unlink(fasta_file[1])
         
-        counts[";".join(gene_info["ids"])] = gene_counts
+        counts[":".join(gene_info["ids"])] = gene_counts
 
     return counts
 
