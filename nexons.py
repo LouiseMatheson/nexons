@@ -139,18 +139,22 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
         unknown_transcript = 1
 
         splice_counts[gene] = {}
-       
-        # simplifying the splice counts - genes_transcripts_exons[gene]["transcripts"] contains a load of info for that transcript - a dict of start, stop, exons, splice_patterns (maybe it doesn't need that but we'll leave it for now).
+        
+        # we also could have multiple IDs for a gene, need to work through these one at a time to pull out known isoforms
+        gene_ids = gene.split(";")
+        
+        # simplifying the splice counts - genes_transcripts_exons[gene_id]["transcripts"] contains a load of info for that transcript - a dict of start, stop, exons, splice_patterns (maybe it doesn't need that but we'll leave it for now).
        
         # seed with the transcripts from the gtf file
-        for transcript_id in genes_transcripts_exons[gene]["transcripts"]:
+        for gene_id in gene_ids:
+            for transcript_id in genes_transcripts_exons[gene_id]["transcripts"]:
 
-            # structure is splice_counts[gene][splice_pattern]
-            splice_counts[gene][genes_transcripts_exons[gene]["transcripts"][transcript_id]["splice_patterns"]] = {
-                "transcript_id": transcript_id,
-                "count": 0,
-                "strand": genes_transcripts_exons[gene]["transcripts"][transcript_id]["strand"]
-            }
+                # structure is splice_counts[gene][splice_pattern]
+                splice_counts[gene][genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["splice_patterns"]] = {
+                    "transcript_id": transcript_id,
+                    "count": 0,
+                    "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"]
+                }
             
         #print(f"strand = {genes_transcripts_exons[gene]['transcripts'][transcript_id]['strand']}")
         #print("\n ============ splice_counts[gene].keys()==================")
@@ -335,14 +339,18 @@ def write_output(data, gene_annotations, file, mincount, splice_info):
             for splice in splices.keys():
                 if splices[splice] >= mincount or options.report_all:
                     passed_splices.append(splice)
+                    
+            # For genes which have >1 Ensembl ID, these are all included in gene, separated with ; (assuming same chromsome and strand)
+            # Split these and use the first to access name, chromosome and strand
+            gene_ids = gene.split(";")
 
             # Now we can go through the splices for all BAM files
             for splice in passed_splices:
                 line_values = [
                     gene,
-                    gene_annotations[gene]["name"],
-                    gene_annotations[gene]["chrom"],
-                    gene_annotations[gene]["strand"],
+                    gene_annotations[gene_ids[0]]["name"],
+                    gene_annotations[gene_ids[0]]["chrom"],
+                    gene_annotations[gene_ids[0]]["strand"],
                     ":".join("-".join(str(coord) for coord in junction) for junction in splice),
                     splice_info[gene][splice]["transcript_id"]
                 ]
@@ -378,73 +386,75 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
 
     bam_files = list(data.keys())
  
-    with open("match_info.txt","w") as report_all_outfile:
-        if options.report_all:
-            report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern"]
-            report_all_outfile.write("\t".join(report_all_header))
-            report_all_outfile.write("\n")
  
-        with open(file,"w") as outfile:
-            # Write the header
-            header = ["seqname", "source", "feature", "start", "end", "score", "strand", "frame", "attribute"]
-            #header.extend(bam_files)
-            outfile.write("\t".join(header))
-            outfile.write("\n")
+    with open(file,"w") as outfile:
+        # Write the header
+        header = ["seqname", "source", "feature", "start", "end", "score", "strand", "frame", "attribute"]
+        #header.extend(bam_files)
+        outfile.write("\t".join(header))
+        outfile.write("\n")
+        genes = data[bam_files[0]].keys()
 
-            genes = data[bam_files[0]].keys()
+        lines_written = 0
 
-            lines_written = 0
+        for gene in genes:
+            # For genes which have >1 Ensembl ID, these are all included in gene, separated with ; (assuming same chromsome and strand)
+            # Split these and use the first to access name, chromosome and strand
+            gene_ids = gene.split(";")
+            
+            splices = set() 
 
-            for gene in genes:
-                splices = set() 
+            for bam in bam_files:
+                these_splices = data[bam][gene].keys()
 
+                for splice in these_splices:
+                    splices.add(splice)
+
+            gtf_gene_text = "gene_id " + gene
+
+            # Now we can go through the splices for all BAM files
+            for splice in splices:
+                #line_values = [gene,gene_annotations[gene]["name"],gene_annotations[gene]["chrom"],gene_annotations[gene]["strand"],splice]
+                splice_start = splice[0][0]
+                splice_end = splice[-1][0]
+
+                line_values = [gene_annotations[gene_ids[0]]["chrom"], "nexons", "transcript", splice_start, splice_end, 0, gene_annotations[gene_ids[0]]["strand"], 0]
+
+                splice_text = "splicePattern " + ":".join("-".join(str(coord) for coord in junction) for junction in splice)
+
+                line_above_min = False
                 for bam in bam_files:
-                    these_splices = data[bam][gene].keys()
-
-                    for splice in these_splices:
-                        splices.add(splice)
-
-                gtf_gene_text = "gene_id " + gene
-
-                # Now we can go through the splices for all BAM files
-                for splice in splices:
-                    #line_values = [gene,gene_annotations[gene]["name"],gene_annotations[gene]["chrom"],gene_annotations[gene]["strand"],splice]
-                    splice_start = splice[0][0]
-                    splice_end = splice[-1][0]
-
-                    line_values = [gene_annotations[gene]["chrom"], "nexons", "transcript", splice_start, splice_end, 0, gene_annotations[gene]["strand"], 0]
-
-                    splice_text = "splicePattern " + ":".join("-".join(str(coord) for coord in junction) for junction in splice)
-
-                    line_above_min = False
-                    for bam in bam_files:
-                        if splice in data[bam][gene]:
+                    if splice in data[bam][gene]:
                            
-                            transcript_text = "transcript_id " + str(splice_info[gene][splice]["transcript_id"])
+                        transcript_text = "transcript_id " + str(splice_info[gene][splice]["transcript_id"])
                             
-                            debug(f"splice is  {splice}")
-                            debug(f"splice info  {splice_info[gene][splice]}")
+                        debug(f"splice is  {splice}")
+                        debug(f"splice info  {splice_info[gene][splice]}")
                             
-                            attribute_field = transcript_text + "; " + gtf_gene_text + "; " + splice_text
+                        attribute_field = transcript_text + "; " + gtf_gene_text + "; " + splice_text
                             
-                            line_values[5] += data[bam][gene][splice]["count"]  # adding the count
-                            # if we've got multiple bam files, we want to add up the counts but not keep adding ie. repeating the attribute info.
-                            if(len(line_values) == 8):
+                        line_values[5] += data[bam][gene][splice]["count"]  # adding the count
+                        # if we've got multiple bam files, we want to add up the counts but not keep adding ie. repeating the attribute info.
+                        if(len(line_values) == 8):
                             
-                                line_values.append(attribute_field)
+                            line_values.append(attribute_field)
 
-                            if data[bam][gene][splice]["count"] >= mincount:
-                                line_above_min = True
+                        if data[bam][gene][splice]["count"] >= mincount:
+                            line_above_min = True
                                 
-                            # set the count in the splice copy dict
-                            splice_info_copy[gene][splice]["merged_count"] += data[bam][gene][splice]["count"]
+                        # set the count in the splice copy dict
+                        splice_info_copy[gene][splice]["merged_count"] += data[bam][gene][splice]["count"]
       
-                    if line_above_min:
-                        lines_written += 1
-                        outfile.write("\t".join([str(x) for x in line_values]))
-                        outfile.write("\n")
+                if line_above_min:
+                    lines_written += 1
+                    outfile.write("\t".join([str(x) for x in line_values]))
+                    outfile.write("\n")
                         
-            if options.report_all:
+        if options.report_all:
+            with open("match_info.txt","w") as report_all_outfile:
+                report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern"]
+                report_all_outfile.write("\t".join(report_all_header))
+                report_all_outfile.write("\n")
 
                 splice_info_splices = splice_info_copy[gene].keys()
                 for splice_info_splice in splice_info_splices: 
@@ -466,27 +476,53 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
 
     # The genes have already been filtered if they're
     # going to be so we can iterate through everything
+    
+    # But only want to do this once per unique gene name - otherwise for genes
+    # with multiple IDs can count some reads for both
+    # also include chromosome in case there are poorly annotated/repeated genes that should be analysed separately
+    gene_names = set()
     for gene_id in genes.keys():
-
+        gene_names.add(genes[gene_id]["name"]+"_"+genes[gene_id]["chrom"]+"_"+genes[gene_id]["strand"])
+        
+    for gene_chr in gene_names:
         # For each gene we're going to re-align around
         # the gene region so we'll extract the relevant
-        # part of the genome.  We'll start by just using
-        # the gene region, but we might want to add some
-        # context sequence
-        gene = genes[gene_id]
+        # part of the genome.
+        # Have added 5kb context sequence either end
+        #gene = genes[gene_id]
+        gene_chr = gene_chr.split("_")
+        gene_info = {
+            "name": gene_chr[0],
+            "chrom": gene_chr[1],
+            "strand": gene_chr[2],
+            "ids": [],
+            "start": float("inf"),
+            "end": float("-inf"),
+            "splice_acceptors": set()
+            }
 
-        log(f"Quantitating {gene_id} in {bam_file}")
+        log(f"Quantitating {gene_info['name']} ({gene_info['chrom']}; {gene_info['strand']} strand) in {bam_file}")
 
         # Check that we have the sequence for this gene
-        if not gene["chrom"] in chromosomes:
-            warn(f"Skipping {gene['name']} as we don't have sequence for chromosome {gene['chrom']}")
+        if not gene_info['chrom'] in chromosomes:
+            warn(f"Skipping {gene_info['name']} as we don't have sequence for chromosome {gene_info['chrom']}")
             continue
-
+        
+        gene = {}
+        for gene_id in genes:
+            if genes[gene_id]["name"] == gene_info["name"] and genes[gene_id]["chrom"] == gene_info["chrom"]:
+                gene[gene_id] = genes[gene_id]
+                gene_info["start"] = min(gene_info["start"], genes[gene_id]["start"])
+                gene_info["end"] = max(gene_info["end"], genes[gene_id]["end"])
+                gene_info["ids"].append(gene_id)
+                gene_info["splice_acceptors"] = gene_info["splice_acceptors"] | set(genes[gene_id]["splice_acceptors"])
+                
+        
         fasta_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
-        sequence = chromosomes[gene["chrom"]][(gene["start"]-5001):(gene["end"]+5000)]
+        sequence = chromosomes[gene_info["chrom"]][(gene_info["start"]-5001):(gene_info["end"]+5000)]
 
         with open(fasta_file[1],"w") as out:
-            out.write(f">{gene['name']}\n{sequence}\n")
+            out.write(f">{gene_info['name']}\n{sequence}\n")
  
 
         # We're going to keep track of the set of results from chexons.  The 
@@ -495,9 +531,9 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
         # well as lists of the observed start and end positions so we can later
         # match up transcripts.
         gene_counts = {}  
-        reads = get_reads(gene,bam_file,direction)
+        reads = get_reads(gene,bam_file,direction,gene_info)
 
-        log(f"Found {len(reads)} reads for gene {gene_id} in {bam_file}")
+        log(f"Found {len(reads)} reads for gene {gene_info['name']} ({'/'.join(gene_info['ids'])}) in {bam_file}")
 
         # Let's keep track of how many reads we've processed
         progress_counter = 0
@@ -522,7 +558,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
             # trigger it
 
             try:
-                chexons_result = get_chexons_segment_string(reads[read_id],fasta_file[1],gene, min_exons, min_coverage, map_threshold)
+                chexons_result = get_chexons_segment_string(reads[read_id],fasta_file[1],gene, gene_info, min_exons, min_coverage, map_threshold)
                 
                 
                 # This will either be a dict with the match details in if it worked
@@ -557,15 +593,15 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
         # Clean up the gene sequence file
         os.unlink(fasta_file[1])
         
-        counts[gene["id"]] = gene_counts
+        counts[";".join(gene_info["ids"])] = gene_counts
 
     return counts
 
 
 
-def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_coverage, map_threshold):
+def get_chexons_segment_string (sequence, genomic_file, gene, gene_info, min_exons, min_coverage, map_threshold):
 
-    position_offset = gene["start"]-5000
+    position_offset = gene_info["start"]-5000
     # We need to write the read into a file
     read_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
 
@@ -629,7 +665,7 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
             end = int(start_end[-1])+position_offset-1
 
             if count == 1:
-                if gene["strand"] == "+":
+                if gene_info["strand"] == "+":
                     if start > end:
                         reverse_exon_first = True
                 else:
@@ -637,7 +673,7 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
                         reverse_exon_first = True
 
             if count == 2:
-                if gene["strand"] == "+":
+                if gene_info["strand"] == "+":
                     if start < locations[-1][1]:
                         reverse_exon_first = True
                     if start > end:
@@ -650,7 +686,7 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
 
 
             if count > 2 and reverse_exon_index == 0: # only log first time it goes backwards so we can distinguish when it is only the final junction
-                if gene["strand"] == "+":
+                if gene_info["strand"] == "+":
                     if start < locations[-1][1] or start > end:
                         reverse_exon_index = count
                 else:
@@ -685,13 +721,13 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
     exonNumber = 1
     
     while polyA_align and len(locations) > 0:
-        if any(abs(acceptor - locations[-1][0]) <= options.flexibility for acceptor in gene["splice_acceptors"]):
+        if any(abs(acceptor - locations[-1][0]) <= options.flexibility for acceptor in gene_info["splice_acceptors"]):
             polyA_align = False
         else:
             exon_seq = sequence[cDNA_locations[-1][0]:cDNA_locations[-1][-1]]
             if (exon_seq.count("AAAA") + exon_seq.count("TTTT") + exon_seq.count("ACAC") + exon_seq.count("GTGT")) > (0.15*len(exon_seq)):
                 # this equates to 60% made up of those repeated sequences, since each is 4 bases long - but will miss ends of matches unless multiple of 4 so don't want percentage too high
-                debug(f"Likely polyA mapping detected at exon {exonNumber} from end. Excluding coordinates ({gene['chrom']}{locations[-1]})")
+                debug(f"Likely polyA mapping detected at exon {exonNumber} from end. Excluding coordinates ({gene_info['chrom']}{locations[-1]})")
                 excluded = locations.pop()
                 excluded_cdna = cDNA_locations.pop()
                 exonNumber += 1
@@ -737,7 +773,7 @@ def get_chexons_segment_string (sequence, genomic_file, gene, min_exons, min_cov
         return "FAIL: Transcript coverage too low"
 
     # Check that we've got enough coverage
-    if abs(locations[0][0] - locations[-1][-1]) / abs(gene["end"]-gene["start"]) < min_coverage:
+    if abs(locations[0][0] - locations[-1][-1]) / abs(gene_info["end"]-gene_info["start"]) < min_coverage:
         debug(f"Discarding sequence as coverage of gene was too low {abs(locations[0][0] - locations[-1][-1])} vs {min_coverage}")
         return "FAIL: Gene coverage too low" 
 
@@ -772,7 +808,7 @@ def rev_comp_seq(seq):
     return seq
 
 
-def get_reads(gene, bam_file, direction):
+def get_reads(gene, bam_file, direction, gene_info):
     # We get all reads which sit within the area of the 
     # bam file.  Since it's a BAM file we need to use 
     # samtools to extract the reads.
@@ -788,18 +824,18 @@ def get_reads(gene, bam_file, direction):
     bed_file = tempfile.mkstemp(suffix=".bed", dir="/dev/shm")
 
     with open(bed_file[1],"w") as out:
-    
-        if(options.no_chr_prefix):
-            out.write(f"{gene['chrom']}\t{gene['start']}\t{gene['end']}\n") 
+        for gene_id in gene.keys():
+            if(options.no_chr_prefix):
+                out.write(f"{gene[gene_id]['chrom']}\t{gene[gene_id]['start']}\t{gene[gene_id]['end']}\n") 
             
-        else:
-            # Some chromosome names will already start with chr but we need
-            # to add it here if it doesn't already
-            if gene['chrom'].startswith("chr"):
-                out.write(f"{gene['chrom']}\t{gene['start']}\t{gene['end']}\n")
-
             else:
-                out.write(f"chr{gene['chrom']}\t{gene['start']}\t{gene['end']}\n")
+                # Some chromosome names will already start with chr but we need
+                # to add it here if it doesn't already
+                if gene[gene_id]['chrom'].startswith("chr"):
+                    out.write(f"{gene[gene_id]['chrom']}\t{gene[gene_id]['start']}\t{gene[gene_id]['end']}\n")
+
+                else:
+                    out.write(f"chr{gene[gene_id]['chrom']}\t{gene[gene_id]['start']}\t{gene[gene_id]['end']}\n")
 
 
     # Now we can run samtools to get the data.  We require that the
@@ -816,12 +852,12 @@ def get_reads(gene, bam_file, direction):
         samtools_process = subprocess.Popen(["samtools","view",bam_file,"-L",bed_file[1]], stdout=subprocess.PIPE)
 
     elif direction == "opposing":
-        strand_filter_string = "-f" if gene["strand"] == "+" else "-F"
+        strand_filter_string = "-f" if gene_info["strand"] == "+" else "-F"
         debug(f"Launching samtools with samtools view {bam_file} -L {bed_file[1]} {strand_filter_string} 16")
         samtools_process = subprocess.Popen(["samtools","view",bam_file,"-L",bed_file[1],strand_filter_string,"16"], stdout=subprocess.PIPE)
 
     elif direction == "same":
-        strand_filter_string = "-F" if gene["strand"] == "+" else "-f"
+        strand_filter_string = "-F" if gene_info["strand"] == "+" else "-f"
         debug(f"Launching samtools with samtools view {bam_file} -L {bed_file[1]} {strand_filter_string} 16")
         samtools_process = subprocess.Popen(["samtools","view",bam_file,"-L",bed_file[1],strand_filter_string,"16"], stdout=subprocess.PIPE)
 
@@ -840,7 +876,7 @@ def get_reads(gene, bam_file, direction):
             warn(f"Duplicate read name {sections[0]} detected")
             continue
 
-        if gene["strand"]=="+":
+        if gene_info["strand"]=="+":
             reads[sections[0]]=sections[9]
         else:
             reads[sections[0]]=rev_comp_seq(sections[9])
@@ -985,7 +1021,7 @@ def read_gtf(gtf_file, gene_filter):
                     "strand": strand,
                     "transcripts": {
                     },
-                    "splice_acceptors" : []
+                    "splice_acceptors" : set()
                 }
             else:
                 if start < genes[gene_id]["start"]:
@@ -1014,14 +1050,9 @@ def read_gtf(gtf_file, gene_filter):
 
             genes[gene_id]["transcripts"][transcript_id]["exons"].append([start,end])
             
-            if strand == "+":
-                if exon_number > 1 and not start in genes[gene_id]["splice_acceptors"]:
-                    genes[gene_id]["splice_acceptors"].append(start)
-            else:
-                if exon_number > 1 and not end in genes[gene_id]["splice_acceptors"]:
-                    genes[gene_id]["splice_acceptors"].append(end)
-
-
+            if exon_number > 1:
+                genes[gene_id]["splice_acceptors"].add(start if strand == "+" else end)
+            
     return genes
 
 
