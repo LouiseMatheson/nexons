@@ -146,6 +146,9 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
         # simplifying the splice counts - genes_transcripts_exons[gene_id]["transcripts"] contains a load of info for that transcript - a dict of start, stop, exons, splice_patterns (maybe it doesn't need that but we'll leave it for now).
        
         # seed with the transcripts from the gtf file
+        # also create complete lists of splice donors/acceptors
+        all_donors = set()
+        all_acceptors = set()
         for gene_id in gene_ids:
             for transcript_id in genes_transcripts_exons[gene_id]["transcripts"]:
 
@@ -155,6 +158,10 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
                     "count": 0,
                     "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"]
                 }
+            all_donors = all_donors |  genes_transcripts_exons[gene_id]["splice_donors"]
+            all_acceptors = all_acceptors |  genes_transcripts_exons[gene_id]["splice_acceptors"]
+        all_donors = list(all_donors)
+        all_acceptors = list(all_acceptors)
             
         #print(f"strand = {genes_transcripts_exons[gene]['transcripts'][transcript_id]['strand']}")
         #print("\n ============ splice_counts[gene].keys()==================")
@@ -212,7 +219,7 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
         # it always uses the most frequently observed one if 
         # there is duplication -
         
-        splice_name_map = create_splice_name_map(all_splices, flexibility) 
+        splice_name_map = create_splice_name_map(all_splices, flexibility, all_donors, all_acceptors) 
 
         # From this map we can now build up a new merged set
         # of quantitations which put together the similar splices
@@ -220,7 +227,13 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
             these_splices = data[bam][gene].keys()
 
             for splice in these_splices:
-                used_splice = splice_name_map[splice]
+                # if the pattern has been updated by splice site correction, need to replace key in splice_counts
+                used_splice = splice_name_map[splice]["splice"]
+                if splice_name_map[splice]["updated"]:
+                    splice_counts[gene][used_splice] = splice_counts[gene].pop(splice)
+                    splice_counts[gene][used_splice]["uncorrected_splice"] = splice
+                elif used_splice == splice:
+                    splice_counts[gene][used_splice]["uncorrected_splice"] = "no_correction"
                 if not used_splice in merged_data[bam][gene]:
                     merged_data[bam][gene][used_splice] = {"count":0, "start":[], "end":[]}
                 merged_data[bam][gene][used_splice]["count"] += data[bam][gene][splice]["count"]
@@ -232,7 +245,7 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
 
 
 
-def create_splice_name_map(splices, flexibility):
+def create_splice_name_map(splices, flexibility, all_donors, all_acceptors):
     debug(f"Merging {len(splices)} different splice sites")
     # This takes an ordered list of splice tuples and matches
     # them on the basis of how similar they are.  We work 
@@ -241,6 +254,11 @@ def create_splice_name_map(splices, flexibility):
     # This is what we'll give back.  Every string will be in this
     # and we'll match it either to itself or a more popular 
     # equivalent string
+    
+    # When matched to itself, we will also test each splice donor
+    # and acceptor to see whether it is close to a known donor/
+    # acceptor (annotated or supported by Illumina). If it is
+    # close enough, it will be corrected to the closest value
 
 
     map_to_return = {}
@@ -277,14 +295,54 @@ def create_splice_name_map(splices, flexibility):
             if not too_far:
                 # We can use this as a match
                 #print(f"Merged:\n{splice}\ninto\n{test_segment['string']}\n\n")
-                map_to_return[splice_to_test] = test_segment
+                map_to_return[splice_to_test] = {
+                    "splice": test_segment,
+                    "updated": False # only true if altered by splice site correction, not by merging
+                }
                 found_hit = True
                 break
         
         if not found_hit:
             # Nothing was close enough, so enter this as a new reference
-            map_to_return[splice_to_test] = splice_to_test
-            valid_splice_patterns.append(splice_to_test)
+            
+            # First work through junctions to correct any that are not known splice donors/acceptors,
+            # but close enough to known sites.
+            # Need to keep track of those that have been updated in this way
+            corrected_splice = []
+            for i in range(len(splice_to_test)):
+                if i == 0:
+                    mindist_donor = min(abs(splice_to_test[i][0] - donor) for donor in all_donors)
+                    if 0 < mindist_donor <= flexibility:
+                        new_donor = all_donors[[abs(splice_to_test[i][0] - donor) for donor in all_donors].index(mindist_donor)]
+                        corrected_splice.append((new_donor,))
+                    else:
+                        corrected_splice.append(splice_to_test[i])
+                elif i == (len(splice_to_test)-1):
+                    mindist_acceptor = min(abs(splice_to_test[i][0] - acceptor) for acceptor in all_acceptors)
+                    if 0 < mindist_acceptor <= flexibility:
+                        new_acceptor = all_acceptors[[abs(splice_to_test[i][0] - acceptor) for acceptor in all_acceptors].index(mindist_acceptor)]
+                        corrected_splice.append((new_acceptor,))
+                    else:
+                        corrected_splice.append(splice_to_test[i])
+                else:
+                    mindist_acceptor = min(abs(splice_to_test[i][0] - acceptor) for acceptor in all_acceptors)
+                    mindist_donor = min(abs(splice_to_test[i][1] - donor) for donor in all_donors)
+                    if 0 < mindist_acceptor <= flexibility:
+                        new_acceptor = all_acceptors[[abs(splice_to_test[i][0] - acceptor) for acceptor in all_acceptors].index(mindist_acceptor)]
+                    else:
+                        new_acceptor = splice_to_test[i][0] # stays the same
+                    if 0 < mindist_donor <= flexibility:
+                        new_donor = all_donors[[abs(splice_to_test[i][1] - donor) for donor in all_donors].index(mindist_donor)]
+                    else:
+                        new_donor = splice_to_test[i][1] # stays the same
+                    corrected_splice.append((new_acceptor, new_donor))
+
+                
+            map_to_return[splice_to_test] = {
+                "splice": tuple(corrected_splice),
+                "updated": False if corrected_splice == splice_to_test else True
+            }
+            valid_splice_patterns.append(tuple(corrected_splice))
 
     if options.verbose:    
         debug(f"Produced {len(valid_splice_patterns)} deduplicated splices")
@@ -452,7 +510,7 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                         
         if options.report_all:
             with open("match_info.txt","w") as report_all_outfile:
-                report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern"]
+                report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern", "uncorrected_splice_pattern"]
                 report_all_outfile.write("\t".join(report_all_header))
                 report_all_outfile.write("\n")
 
@@ -461,7 +519,7 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                     splice_is_start = splice_info_splice[0][0]
                     splice_is_end = splice_info_splice[-1][0]
                     other_info = splice_info_copy[gene][splice_info_splice]
-                    out_line = [gene, "nexons", "transcript", splice_is_start, splice_is_end, other_info["transcript_id"], other_info["count"], other_info["merged_count"], splice_info_splice]
+                    out_line = [gene, "nexons", "transcript", splice_is_start, splice_is_end, other_info["transcript_id"], other_info["count"], other_info["merged_count"], splice_info_splice, other_info["uncorrected_splice"]]
                     report_all_outfile.write("\t".join([str(x) for x in out_line]))
                     report_all_outfile.write("\n")
 
@@ -737,7 +795,7 @@ def get_chexons_segment_string (sequence, genomic_file, gene, gene_info, min_exo
         debug(f"Discarding sequence as reverse splicing detected (final exon/junction only)")
         return "FAIL: Reverse splicing or mapping (last exon)"
 
-    elif reverse_exon_first == True and reverse_exon_index == 0 and len(locations) > 0: # last test just in case all exons removed already
+    elif reverse_exon_first == True and (reverse_exon_index == 0 or reverse_exon_index > len(locations)): # first exon affected; either no other exon, or terminal exon(s) already removed as identified as polyA
         debug(f"Discarding sequence as reverse splicing detected (first exon/junction only)")
         return "FAIL: Reverse splicing or mapping (first exon)"
 
@@ -925,7 +983,7 @@ def read_gtf(gtf_file, gene_filter):
     with open(gtf_file) as file:
 
         genes = {}
-
+        
         for line in file:
 
             # Skip comments
@@ -955,6 +1013,7 @@ def read_gtf(gtf_file, gene_filter):
             transcript_id=None
             transcript_name=None
             exon_number=None
+            transcript_confidence=0
 
             for comment in comments:
                 if comment.strip().startswith("gene_id"):
@@ -971,7 +1030,18 @@ def read_gtf(gtf_file, gene_filter):
                     
                 if comment.strip().startswith("exon_number"):
                     exon_number=int(comment.strip()[12:].replace('"','').strip())
+
+                if comment.strip().startswith("transcript_support_level"):
+                    tsl=comment.strip()[25:].replace('"','').strip()[0]
+                    if tsl in ["1","2","3","4","5"]:
+                        transcript_confidence += int(tsl)
+                    else:
+                        transcript_confidence += 6
+                        
+                if comment.strip().startswith("ccds"):
+                    transcript_confidence += 10
                     
+
             if gene_id is None and gene_name is None:
                 warn(f"No gene name or id found for exon at {chrom}:{start}-{end}")
                 continue
@@ -991,18 +1061,13 @@ def read_gtf(gtf_file, gene_filter):
                 if not (gene_name == gene_filter or gene_id == gene_filter) :
                     continue
             
-            if transcript_id is None and transcript_name is None:
-                warn(f"No name or id found for transcript at {chrom}:{start}-{end}")
-                continue
-
             if transcript_id is None:
                 transcript_id = transcript_name
 
             if transcript_name is None:
                 transcript_name = transcript_id
 
-            exons = [start, end]
-            
+            exons = [start, end]            
 
             if gene_id not in genes:
                 genes[gene_id] = {
@@ -1014,8 +1079,10 @@ def read_gtf(gtf_file, gene_filter):
                     "strand": strand,
                     "transcripts": {
                     },
-                    "splice_acceptors" : set()
+                    "splice_acceptors" :set(),
+                    "splice_donors": set()
                 }
+                
             else:
                 if start < genes[gene_id]["start"]:
                     genes[gene_id]["start"] = start
@@ -1031,6 +1098,7 @@ def read_gtf(gtf_file, gene_filter):
                     "start": start,
                     "end": end,
                     "strand": strand,
+                    "transcript_confidence": transcript_confidence,
                     "exons" : []
                 }
             else:
@@ -1045,10 +1113,36 @@ def read_gtf(gtf_file, gene_filter):
             
             if exon_number > 1:
                 genes[gene_id]["splice_acceptors"].add(start if strand == "+" else end)
-            
+    
+    for gene in genes.keys():
+        for transcript in genes[gene]["transcripts"].keys():
+            if genes[gene]["strand"] == "+":
+                donors = sorted([exon[1] for exon in genes[gene]["transcripts"][transcript]["exons"]])
+            else:
+                donors = sorted([exon[0] for exon in genes[gene]["transcripts"][transcript]["exons"]], reverse=True)
+            donors.pop()
+            genes[gene]["splice_donors"] = genes[gene]["splice_donors"] | set(donors)
+    
+    if options.splice_sites is not None:
+        genes = read_splice_sites(genes, options.splice_sites)
+    
     return genes
 
 
+def read_splice_sites(genes, splicesites):
+    
+    with open(splicesites) as file:
+        for line in file:
+            sections = line.split("\t")
+            for gene in genes.keys():
+                if not (sections[0] == genes[gene]["chrom"] and sections[1] == genes[gene]["strand"]):
+                    continue
+                if (genes[gene]["start"]-5000) < int(sections[3]) < (genes[gene]["end"]+5000):
+                    if sections[2] == "splice_acceptor":
+                        genes[gene]["splice_acceptors"].add(int(sections[3]))
+                    else:
+                        genes[gene]["splice_donors"].add(int(sections[3]))
+    return(genes)
 
 
 # To convert the start/stop exon locations to a splice site tuple which looks like
@@ -1150,6 +1244,13 @@ def get_options():
     parser.add_argument(
         "--gene","-g",
         help="The name or ID of a single gene to quantitate"
+    )
+
+    parser.add_argument(
+        "--splice_sites",
+        help="Text file containing known splice donors and acceptors",
+        default=None,
+        type=str
     )
 
     parser.add_argument(
