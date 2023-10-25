@@ -107,7 +107,6 @@ def debug (message):
         print("DEBUG:",message, file=sys.stderr)
 
 
-
 def collate_splice_variants(data, flexibility, genes_transcripts_exons):
     # The structure for the data is 
     # data[bam_file_name][gene_id][splicing_structure_tuple] = {count:0, start:1, end:2}
@@ -151,13 +150,16 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
         all_acceptors = set()
         for gene_id in gene_ids:
             for transcript_id in genes_transcripts_exons[gene_id]["transcripts"]:
-
+                splice_pattern = genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["splice_patterns"]
                 # structure is splice_counts[gene][splice_pattern]
-                splice_counts[gene][genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["splice_patterns"]] = {
-                    "transcript_id": transcript_id,
-                    "count": 0,
-                    "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"]
-                }
+                if not splice_pattern in splice_counts[gene].keys():
+                    splice_counts[gene][splice_pattern] = {
+                        "transcript_id": transcript_id,
+                        "count": 0,
+                        "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"]
+                    }
+                else: # record all possible transcript IDs with the same pattern, rather than just replacing if > 1
+                    splice_counts[gene][splice_pattern]["transcript_id"] = transcript_id + ":" + splice_counts[gene][splice_pattern]["transcript_id"]
             all_donors = all_donors |  genes_transcripts_exons[gene_id]["splice_donors"]
             all_acceptors = all_acceptors |  genes_transcripts_exons[gene_id]["splice_acceptors"]
         all_donors = list(all_donors)
@@ -1013,7 +1015,7 @@ def read_gtf(gtf_file, gene_filter):
             transcript_id=None
             transcript_name=None
             exon_number=None
-            transcript_confidence=0
+            transcript_confidence=0 
 
             for comment in comments:
                 if comment.strip().startswith("gene_id"):
@@ -1034,9 +1036,9 @@ def read_gtf(gtf_file, gene_filter):
                 if comment.strip().startswith("transcript_support_level"):
                     tsl=comment.strip()[25:].replace('"','').strip()[0]
                     if tsl in ["1","2","3","4","5"]:
-                        transcript_confidence += int(tsl)
+                        transcript_confidence -= int(tsl)
                     else:
-                        transcript_confidence += 6
+                        transcript_confidence -= 6
                         
                 if comment.strip().startswith("ccds"):
                     transcript_confidence += 10
@@ -1080,7 +1082,8 @@ def read_gtf(gtf_file, gene_filter):
                     "transcripts": {
                     },
                     "splice_acceptors" :set(),
-                    "splice_donors": set()
+                    "splice_donors": set(),
+                    "transcript_confidence": []
                 }
                 
             else:
@@ -1098,9 +1101,9 @@ def read_gtf(gtf_file, gene_filter):
                     "start": start,
                     "end": end,
                     "strand": strand,
-                    "transcript_confidence": transcript_confidence,
                     "exons" : []
                 }
+                genes[gene_id]["transcript_confidence"].append(transcript_confidence)
             else:
                 if start < genes[gene_id]["transcripts"][transcript_id]["start"]:
                     genes[gene_id]["transcripts"][transcript_id]["start"] = start
@@ -1108,13 +1111,19 @@ def read_gtf(gtf_file, gene_filter):
                 if end > genes[gene_id]["transcripts"][transcript_id]["end"]:
                     genes[gene_id]["transcripts"][transcript_id]["end"] = end
 
-
             genes[gene_id]["transcripts"][transcript_id]["exons"].append([start,end])
             
-            if exon_number > 1:
+            if exon_number > 1: 
                 genes[gene_id]["splice_acceptors"].add(start if strand == "+" else end)
     
     for gene in genes.keys():
+        # sort list based on transcript confidence - most confident last
+        sorted_transcripts = {}
+        for y, x in sorted(zip(genes[gene]["transcript_confidence"], list(genes[gene]["transcripts"].keys()))):
+            sorted_transcripts[x] = genes[gene]["transcripts"][x]
+        
+        genes[gene]["transcripts"] = sorted_transcripts
+        
         for transcript in genes[gene]["transcripts"].keys():
             if genes[gene]["strand"] == "+":
                 donors = sorted([exon[1] for exon in genes[gene]["transcripts"][transcript]["exons"]])
