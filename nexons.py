@@ -156,9 +156,11 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
                     splice_counts[gene][splice_pattern] = {
                         "transcript_id": transcript_id,
                         "count": 0,
-                        "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"]
+                        "strand": genes_transcripts_exons[gene_id]["transcripts"][transcript_id]["strand"],
+                        "merged_isoforms":set(),
+                        "uncorrected_splice": "no_correction"
                     }
-                else: # record all possible transcript IDs with the same pattern, rather than just replacing if > 1
+                else: # record all possible transcript IDs with the same pattern, rather than just replacing if > 1. Transcripts ordered with most confident last, so append subsequent IDs the start
                     splice_counts[gene][splice_pattern]["transcript_id"] = transcript_id + ":" + splice_counts[gene][splice_pattern]["transcript_id"]
             all_donors = all_donors |  genes_transcripts_exons[gene_id]["splice_donors"]
             all_acceptors = all_acceptors |  genes_transcripts_exons[gene_id]["splice_acceptors"]
@@ -182,7 +184,9 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
                     splice_counts[gene][splice] = {
                         "transcript_id": "Variant"+str(unknown_transcript),
                         "count": 0,
-                        "strand": "tbc"
+                        "strand": "tbc",
+                        "merged_isoforms":set(),
+                        "uncorrected_splice": "no_correction"
                     }
                     unknown_transcript += 1               
                 splice_counts[gene][splice]["count"] += data[bam][gene][splice]["count"]
@@ -231,13 +235,18 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
             for splice in these_splices:
                 # if the pattern has been updated by splice site correction, need to replace key in splice_counts
                 used_splice = splice_name_map[splice]["splice"]
-                if splice_name_map[splice]["updated"]:
+                if not used_splice in merged_data[bam][gene]:
+                    merged_data[bam][gene][used_splice] = {"count":0, "start":[], "end":[], "merged_isoforms":[]}
+                if used_splice == splice:
+                    splice_counts[gene][splice]["uncorrected_splice"] = "no_correction"
+                elif splice_name_map[splice]["updated"]:
                     splice_counts[gene][used_splice] = splice_counts[gene].pop(splice)
                     splice_counts[gene][used_splice]["uncorrected_splice"] = splice
-                elif used_splice == splice:
-                    splice_counts[gene][used_splice]["uncorrected_splice"] = "no_correction"
-                if not used_splice in merged_data[bam][gene]:
-                    merged_data[bam][gene][used_splice] = {"count":0, "start":[], "end":[]}
+                else:
+                    splice_counts[gene][splice]["uncorrected_splice"] = "no_correction"
+                    if splice_counts[gene][splice]["transcript_id"].startswith("ENSMUST"):
+                        merged_data[bam][gene][used_splice]["merged_isoforms"].append(splice_counts[gene][splice]["transcript_id"])
+                        splice_counts[gene][used_splice]["merged_isoforms"].add(splice_counts[gene][splice]["transcript_id"])
                 merged_data[bam][gene][used_splice]["count"] += data[bam][gene][splice]["count"]
                 merged_data[bam][gene][used_splice]["start"].extend(data[bam][gene][splice]["start"])
                 merged_data[bam][gene][used_splice]["end"].extend(data[bam][gene][splice]["end"])
@@ -342,7 +351,7 @@ def create_splice_name_map(splices, flexibility, all_donors, all_acceptors):
                 
             map_to_return[splice_to_test] = {
                 "splice": tuple(corrected_splice),
-                "updated": False if corrected_splice == splice_to_test else True
+                "updated": False if tuple(corrected_splice) == splice_to_test else True
             }
             valid_splice_patterns.append(tuple(corrected_splice))
 
@@ -366,7 +375,7 @@ def write_output(data, gene_annotations, file, mincount, splice_info):
  
     with open(file,"w") as outfile:
         # Write the header
-        header = ["File","Gene ID", "Gene Name","Chr","Strand","SplicePattern", "Transcript id","Count","Starts","Ends"]
+        header = ["File","Gene ID", "Gene Name","Chr","Strand","SplicePattern", "Transcript id","Count","Starts","Ends", "MergedIsoforms"]
         outfile.write("\t".join(header))
         outfile.write("\n")
 
@@ -420,7 +429,8 @@ def write_output(data, gene_annotations, file, mincount, splice_info):
                         splice_line = [
                             str(data[bam][gene][splice]["count"]),
                             ",".join([str(x) for x in data[bam][gene][splice]["start"]]),
-                            ",".join([str(x) for x in data[bam][gene][splice]["end"]])
+                            ",".join([str(x) for x in data[bam][gene][splice]["end"]]),
+                            "_".join(data[bam][gene][splice]["merged_isoforms"])
                         ]
                         print("\t".join([bam]+line_values+splice_line), file=outfile)
                 
@@ -481,17 +491,23 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                 line_values = [gene_annotations[gene_ids[0]]["chrom"], "nexons", "transcript", splice_start, splice_end, 0, gene_annotations[gene_ids[0]]["strand"], 0]
 
                 splice_text = "splicePattern " + ":".join("-".join(str(coord) for coord in junction) for junction in splice)
-
+                
+                
                 line_above_min = False
                 for bam in bam_files:
                     if splice in data[bam][gene]:
                            
                         transcript_text = "transcript_id " + str(splice_info[gene][splice]["transcript_id"])
-                            
+                        
+                        
                         debug(f"splice is  {splice}")
                         debug(f"splice info  {splice_info[gene][splice]}")
-                            
-                        attribute_field = transcript_text + "; " + gtf_gene_text + "; " + splice_text
+                        
+                        if len(splice_info[gene][splice]["merged_isoforms"]) > 0:
+                            merged_iso_text = "mergedIsoforms " + "_".join(list(splice_info[gene][splice]["merged_isoforms"]))
+                            attribute_field = transcript_text + "; " + gtf_gene_text + "; " + splice_text + "; " + merged_iso_text
+                        else:
+                            attribute_field = transcript_text + "; " + gtf_gene_text + "; " + splice_text
                             
                         line_values[5] += data[bam][gene][splice]["count"]  # adding the count
                         # if we've got multiple bam files, we want to add up the counts but not keep adding ie. repeating the attribute info.
@@ -499,7 +515,7 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                             
                             line_values.append(attribute_field)
 
-                        if data[bam][gene][splice]["count"] >= mincount:
+                        if data[bam][gene][splice]["count"] >= mincount or options.report_all:
                             line_above_min = True
                                 
                         # set the count in the splice copy dict
@@ -512,7 +528,7 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                         
         if options.report_all:
             with open("match_info.txt","w") as report_all_outfile:
-                report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern", "uncorrected_splice_pattern"]
+                report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern", "uncorrected_splice_pattern", "merged_isoforms"]
                 report_all_outfile.write("\t".join(report_all_header))
                 report_all_outfile.write("\n")
 
@@ -521,7 +537,7 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                     splice_is_start = splice_info_splice[0][0]
                     splice_is_end = splice_info_splice[-1][0]
                     other_info = splice_info_copy[gene][splice_info_splice]
-                    out_line = [gene, "nexons", "transcript", splice_is_start, splice_is_end, other_info["transcript_id"], other_info["count"], other_info["merged_count"], splice_info_splice, other_info["uncorrected_splice"]]
+                    out_line = [gene, "nexons", "transcript", splice_is_start, splice_is_end, other_info["transcript_id"], other_info["count"], other_info["merged_count"], splice_info_splice, other_info["uncorrected_splice"], "_".join(list(other_info["merged_isoforms"]))]
                     report_all_outfile.write("\t".join([str(x) for x in out_line]))
                     report_all_outfile.write("\n")
 
