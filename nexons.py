@@ -375,7 +375,7 @@ def write_output(data, gene_annotations, file, mincount, splice_info):
  
     with open(file,"w") as outfile:
         # Write the header
-        header = ["File","Gene ID", "Gene Name","Chr","Strand","SplicePattern", "Transcript id","Count","Starts","Ends", "MergedIsoforms"]
+        header = ["File","GeneID", "GeneName","Chr","Strand","SplicePattern", "TranscriptID","Count","Starts","Ends", "MergedIsoforms"]
         outfile.write("\t".join(header))
         outfile.write("\n")
 
