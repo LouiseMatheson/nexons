@@ -527,7 +527,9 @@ def write_gtf_output(data, gene_annotations, file, mincount, splice_info):
                     outfile.write("\n")
                         
         if options.report_all:
-            with open("match_info.txt","w") as report_all_outfile:
+            file_stripped = file.replace(".gtf", "")
+            file_all = file_stripped + "_matchInfo.tsv"
+            with open(file_all,"w") as report_all_outfile:
                 report_all_header = ["seqname", "source", "feature", "start", "end", "id", "exact_count", "merged_count", "splice_pattern", "uncorrected_splice_pattern", "merged_isoforms"]
                 report_all_outfile.write("\t".join(report_all_header))
                 report_all_outfile.write("\n")
