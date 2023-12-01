@@ -237,14 +237,15 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
                 used_splice = splice_name_map[splice]["splice"]
                 if not used_splice in merged_data[bam][gene]:
                     merged_data[bam][gene][used_splice] = {"count":0, "start":[], "end":[], "merged_isoforms":[]}
-                if used_splice == splice:
-                    splice_counts[gene][splice]["uncorrected_splice"] = "no_correction"
-                elif splice_name_map[splice]["updated"]:
-                    splice_counts[gene][used_splice] = splice_counts[gene].pop(splice)
-                    splice_counts[gene][used_splice]["uncorrected_splice"] = splice
-                else:
-                    splice_counts[gene][splice]["uncorrected_splice"] = "no_correction"
-                    if splice_counts[gene][splice]["transcript_id"].startswith("ENSMUST"):
+                if splice_name_map[splice]["updated"]:
+                    if splice in splice_counts[gene].keys():
+                        if not used_splice in splice_counts[gene].keys():
+                            splice_counts[gene][used_splice] = splice_counts[gene].pop(splice)
+                        else:
+                            splice_counts[gene].pop(splice)
+                        splice_counts[gene][used_splice]["uncorrected_splice"] = splice
+                elif not used_splice == splice:
+                    if splice_counts[gene][splice]["transcript_id"].startswith("ENSMUST") and not splice_counts[gene][splice]["transcript_id"] in merged_data[bam][gene][used_splice]["merged_isoforms"]:
                         merged_data[bam][gene][used_splice]["merged_isoforms"].append(splice_counts[gene][splice]["transcript_id"])
                         splice_counts[gene][used_splice]["merged_isoforms"].add(splice_counts[gene][splice]["transcript_id"])
                 merged_data[bam][gene][used_splice]["count"] += data[bam][gene][splice]["count"]
