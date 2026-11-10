@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import argparse
 import tempfile
 import subprocess
@@ -166,6 +166,8 @@ def collate_splice_variants(data, flexibility, genes_transcripts_exons):
             all_acceptors = all_acceptors |  genes_transcripts_exons[gene_id]["splice_acceptors"]
         all_donors = list(all_donors)
         all_acceptors = list(all_acceptors)
+        all_donors.append(float('inf'))
+        all_acceptors.append(float('inf'))
             
         #print(f"strand = {genes_transcripts_exons[gene]['transcripts'][transcript_id]['strand']}")
         #print("\n ============ splice_counts[gene].keys()==================")
@@ -349,12 +351,18 @@ def create_splice_name_map(splices, flexibility, all_donors, all_acceptors):
                         new_donor = splice_to_test[i][1] # stays the same
                     corrected_splice.append((new_acceptor, new_donor))
 
-                
-            map_to_return[splice_to_test] = {
-                "splice": tuple(corrected_splice),
-                "updated": False if tuple(corrected_splice) == splice_to_test else True
-            }
-            valid_splice_patterns.append(tuple(corrected_splice))
+            if len(splice_to_test) == 1:
+                map_to_return[splice_to_test] = {
+                    "splice": splice_to_test, # if single exon, stays the same
+                    "updated": False
+                    }
+                valid_splice_patterns.append(splice_to_test)
+            else:
+                map_to_return[splice_to_test] = {
+                    "splice": tuple(corrected_splice), # if single exon, stays the same
+                    "updated": False if tuple(corrected_splice) == splice_to_test else True
+                    }
+                valid_splice_patterns.append(tuple(corrected_splice))
 
     if options.verbose:    
         debug(f"Produced {len(valid_splice_patterns)} deduplicated splices")
@@ -598,7 +606,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
                 
         
         fasta_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
-        sequence = chromosomes[gene_info["chrom"]][(gene_info["start"]-5001):(gene_info["end"]+5000)]
+        sequence = chromosomes[gene_info["chrom"]][max((gene_info["start"]-5001), 0):(gene_info["end"]+5000)]
 
         with open(fasta_file[1],"w") as out:
             out.write(f">{gene_info['name']}\n{sequence}\n")
@@ -680,7 +688,7 @@ def process_bam_file(genes, chromosomes, bam_file, direction, min_exons, min_cov
 
 def get_chexons_segment_string (sequence, genomic_file, gene, gene_info, min_exons, min_coverage, map_threshold):
 
-    position_offset = gene_info["start"]-5000
+    position_offset = max(gene_info["start"]-5000, 1) # sequence can't start below 1 (eg MT or SIRV)
     # We need to write the read into a file
     read_file = tempfile.mkstemp(suffix=".fa", dir="/dev/shm")
 
@@ -1033,7 +1041,6 @@ def read_gtf(gtf_file, gene_filter):
             gene_name=None
             transcript_id=None
             transcript_name=None
-            exon_number=None
             transcript_confidence=0 
 
             for comment in comments:
@@ -1049,9 +1056,6 @@ def read_gtf(gtf_file, gene_filter):
                 if comment.strip().startswith("transcript_name"):
                     transcript_name=comment.strip()[17:].replace('"','').strip()
                     
-                if comment.strip().startswith("exon_number"):
-                    exon_number=int(comment.strip()[12:].replace('"','').strip())
-
                 if comment.strip().startswith("transcript_support_level"):
                     tsl=comment.strip()[25:].replace('"','').strip()[0]
                     if tsl in ["1","2","3","4","5"]:
@@ -1132,8 +1136,6 @@ def read_gtf(gtf_file, gene_filter):
 
             genes[gene_id]["transcripts"][transcript_id]["exons"].append([start,end])
             
-            if exon_number > 1: 
-                genes[gene_id]["splice_acceptors"].add(start if strand == "+" else end)
     
     for gene in genes.keys():
         # sort list based on transcript confidence - most confident last
@@ -1146,10 +1148,14 @@ def read_gtf(gtf_file, gene_filter):
         for transcript in genes[gene]["transcripts"].keys():
             if genes[gene]["strand"] == "+":
                 donors = sorted([exon[1] for exon in genes[gene]["transcripts"][transcript]["exons"]])
+                acceptors = sorted([exon[0] for exon in genes[gene]["transcripts"][transcript]["exons"]], reverse=True)
             else:
                 donors = sorted([exon[0] for exon in genes[gene]["transcripts"][transcript]["exons"]], reverse=True)
+                acceptors = sorted([exon[1] for exon in genes[gene]["transcripts"][transcript]["exons"]])
             donors.pop()
+            acceptors.pop()
             genes[gene]["splice_donors"] = genes[gene]["splice_donors"] | set(donors)
+            genes[gene]["splice_acceptors"] = genes[gene]["splice_acceptors"] | set(acceptors)
     
     if options.splice_sites is not None:
         genes = read_splice_sites(genes, options.splice_sites)
@@ -1236,42 +1242,42 @@ def get_options():
 
     parser.add_argument(
         "--flexibility","-f",
-        help="How many bases different can exon boundaries be and still merge them",
+        help="Maximum difference between exon boundaries for splice patterns to be merged (applies to individual coordinates: as long as differences for all sites are within the flexibility, the splice patterns will be merged)",
         default=5, 
         type=int
     )
 
     parser.add_argument(
         "--mincount","-m",
-        help="What is the minimum number of observations for any given variant to report",
+        help="Minimum number of observations for any given variant to report",
         default=2, 
         type=int
     )
 
     parser.add_argument(
         "--mincoverage","-c",
-        help="What is the minimum proportion of the gene which must be covered by a variant",
+        help="Minimum proportion of the gene which must be covered by a variant",
         default=0.1,
         type=float
     )
 
     parser.add_argument(
         "--mapthreshold","-mt",
-        help="What is the minimum proportion of the sequence that must be mapped to a transcript",
+        help="Minimum proportion of the sequence that must be mapped to a transcript",
         default=0.1,
         type=float
     )
 
     parser.add_argument(
         "--minexons","-e",
-        help="What is the minimum number of exons which must be present to count a transcript",
+        help="Minimum number of exons which must be present to count a transcript",
         default=2,
         type=int
     )
 
     parser.add_argument(
         "--gene","-g",
-        help="The name or ID of a single gene to quantitate"
+        help="Name or ID of a single gene to quantitate"
     )
 
     parser.add_argument(
@@ -1283,13 +1289,13 @@ def get_options():
 
     parser.add_argument(
         "--direction","-d",
-        help="The directionality of the library (none, same, opposing)",
+        help="Directionality of the library (none, same, opposing)",
         default="none"
     )
 
     parser.add_argument(
         "--no_chr_prefix","-nc",
-        help="Don't add a 'chr' prefix in temp bed file (required for SIRV sequences where chr doesn't start with 'chr'",
+        help="Don't add a 'chr' prefix in temp bed file (required when the fasta file used for mapping does not use this prefix)",
         action="store_true"
     )
 
