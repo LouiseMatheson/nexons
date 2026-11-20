@@ -104,7 +104,7 @@ for job in `seq 1 $njobs`;
 do
     mkdir -p "${nexdir}subset$job";
     find $nexdir -maxdepth 1 -iregex ".*txt" | head -n $s | xargs -i mv "{}" "${nexdir}subset$job"
-    ssub -c $c --mem $mem -o logfiles_nexons_postprocess/${file_prefix}_subset${job}.log -j subset$job --email Rscript --vanilla $processing_script -o "${file_prefix}_subset${job}$file_suffix" -q "${file_prefix}_completeEnds_subset${job}$file_suffix" -f $f -m $m -i $i -x $x -g $g -e $e -d $d -p $p -r $r -c $c -z "FINISHED_subset${job}.log" $gtf ${nexdir}subset$job
+    ssub -c $c --mem $mem -o logfiles_nexons_postprocess/${file_prefix}_subset${job}.log -j subset$job --email Rscript --vanilla $processing_script -o "${file_prefix}_subset${job}$file_suffix" -q "${file_prefix}_completeEnds_subset${job}$file_suffix" --no_header -f $f -m $m -i $i -x $x -g $g -e $e -d $d -p $p -r $r -c $c -z "FINISHED_subset${job}.log" $gtf ${nexdir}subset$job
 done
 
 for job in `seq 1 $njobs`;

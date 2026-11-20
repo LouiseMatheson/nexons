@@ -19,83 +19,128 @@ print("Reading parameters...")
 
 Args = commandArgs(trailingOnly=TRUE)
 
-if(length(Args) > 1) {
-  gtf_file <- Args[length(Args)-1]
-} else { gtf_file <- "../../Annotations/gencode.vM28.annotation.gtf.gz" }
-print(paste("GTF file:", gtf_file))
-
-if(length(Args) > 1) {
-  nexons_directory <- Args[length(Args)]
-} else { nexons_directory <- "per_gene_outs/" }
-print(paste("Nexons output directory:", nexons_directory))
 
 
 if("-o" %in% Args) {
   output_file <- Args[which(Args == "-o") + 1]
+  Args <- Args[-(which(Args == "-o")+1)]
+  Args <- Args[!Args == "-o"]
 } else { output_file <- "nexons_output_refined.txt" }
 print(paste("Output file:", output_file))
 
 if("-q" %in% Args) {
   ends_outfile <- Args[which(Args == "-q") + 1]
-} else { ends_outfile <- "nexons_output_refined_completeEnds.txt" }
+  Args <- Args[-(which(Args == "-q")+1)]
+  Args <- Args[!Args == "-q"]
+} else { ends_outfile <- sub("....$", "_completeEnds.txt", output_file) }
 print(paste("Output file (complete ends):", ends_outfile))
 
 if("-z" %in% Args) {
+  log_finish <- T
   FINISHED <- Args[which(Args == "-z") + 1]
-} else { FINISHED <- "FINISHED_subset.log" }
+  Args <- Args[-(which(Args == "-z")+1)]
+  Args <- Args[!Args == "-z"]
+} else { 
+  if("--log_finish" %in% Args) {
+    log_finish <- T
+    FINISHED <- "FINISHED.log"
+  } else {
+    log_finish <- F 
+    FINISHED <- "None"
+  }
+}
 print(paste("Completion logfile:", FINISHED))
+
+if("--log_finish" %in% Args) {
+  Args <- Args[!Args == "--log_finish"]
+}
 
 if("-f" %in% Args) {
   flexibility <- as.numeric(Args[which(Args == "-f") + 1])
+  Args <- Args[-(which(Args == "-f")+1)]
+  Args <- Args[!Args == "-f"]
 } else { flexibility <- 5 }
 print(paste("Flexibility:", flexibility))
 
 if("-m" %in% Args) {
   min_exons <- as.numeric(Args[which(Args == "-m") + 1])
+  Args <- Args[-(which(Args == "-m")+1)]
+  Args <- Args[!Args == "-m"]
 } else { min_exons <- 2 }
 print(paste("Minimum exons:", min_exons))
 
 if("-i" %in% Args) {
   minIntronWidth <- as.numeric(Args[which(Args == "-i") + 1])
+  Args <- Args[-(which(Args == "-i")+1)]
+  Args <- Args[!Args == "-i"]
 } else { minIntronWidth <- 50 } # introns below this will be removed from splice patterns (but splice patterns that would match an annotated isoform if this intron were included will be flagged)
 print(paste("Minimum intron width:", minIntronWidth))
 
 
 if("-x" %in% Args) {
   missedExonWidth <- as.numeric(Args[which(Args == "-x") + 1])
+  Args <- Args[-(which(Args == "-x")+1)]
+  Args <- Args[!Args == "-x"]
 } else { missedExonWidth <- 30 } # will check for splice patterns that match an annotated isoform other than excluding exons below this width
 print(paste("Missing exon width:", missedExonWidth))
 
 if("-g" %in% Args) {
   overlapGap <- as.numeric(Args[which(Args == "-g") + 1])
+  Args <- Args[-(which(Args == "-g")+1)]
+  Args <- Args[!Args == "-g"]
 } else { overlapGap <- 500 } # genes closer than this distance will be designated 'overlapping' and splice patterns checked in case they might originate from the overlapping gene
 print(paste("Overlap gap:", overlapGap))
 
 
 if("-e" %in% Args) {
   flexibility_ends <- as.numeric(Args[which(Args == "-e") + 1])
+  Args <- Args[-(which(Args == "-e")+1)]
+  Args <- Args[!Args == "-e"]
 } else { flexibility_ends <- 10 } # ends < this flexibility apart will be merged
 print(paste("Flexibility for identifying common ends:", flexibility_ends))
 
 if("-d" %in% Args) {
   flexibility_ends2 <- as.numeric(Args[which(Args == "-d") + 1])
+  Args <- Args[-(which(Args == "-d")+1)]
+  Args <- Args[!Args == "-d"]
 } else { flexibility_ends2 <- 30 } # ends assigned to closest collapsed end, if < this flexibility away. Same flexibility used for calculating proportion of reads matching annotated isoforms
 print(paste("Flexibility for collating ends:", flexibility_ends2))
 
 if("-p" %in% Args) {
   start_end_proportion <- as.numeric(Args[which(Args == "-p") + 1])
+  Args <- Args[-(which(Args == "-p")+1)]
+  Args <- Args[!Args == "-p"]
 } else { start_end_proportion <- 0.1 } # start/end combinations above this proportion will be included in the collated (1 row per splice pattern) output
 print(paste("Proportion above which start/end combinations are reported:", start_end_proportion))
 
 if("-r" %in% Args) {
   start_end_minreads <- as.numeric(Args[which(Args == "-r") + 1])
+  Args <- Args[-(which(Args == "-r")+1)]
+  Args <- Args[!Args == "-r"]
 } else { start_end_minreads <- 5 } # Starts/ends must have at least this number of reads with a 5 base window to be included (across all samples and isoforms)
 print(paste("Number of reads required for designation of start/end coordinates:", start_end_minreads))
 
 if("-c" %in% Args) {
   n_cores <- as.numeric(Args[which(Args == "-c") + 1])
+  Args <- Args[-(which(Args == "-c")+1)]
+  Args <- Args[!Args == "-c"]
 } else { n_cores <- 1 } # Will process in parallel over this number of cores
 print(paste("Number of cores:", n_cores))
+
+if("--no_header" %in% Args) {
+  exclude_header <- T
+  Args <- Args[!Args == "--no_header"]
+} else {
+  exclude_header <- F
+}
+
+
+if(length(Args) > 1) {
+  gtf_file <- Args[length(Args)-1]
+  nexons_directory <- Args[length(Args)]
+} else { stop("Insufficient arguments - GTF file and directory containing nexons output must be provided!") }
+print(paste("GTF file:", gtf_file))
+print(paste("Nexons output directory:", nexons_directory))
 
 try(future::plan(multisession, workers = (2*n_cores)))
 
@@ -1322,18 +1367,31 @@ with_progress({
   }) -> postprocessing_output
 })
 
-postprocessing_output %>%
-  map(~ .x[[1]]) %>%
-  dplyr::bind_rows() %>%
-  readr::write_tsv(output_file, col_names = F)
+if(exclude_header == T) {
+  postprocessing_output %>%
+    map(~ .x[[1]]) %>%
+    dplyr::bind_rows() %>%
+    readr::write_tsv(output_file, col_names = F)
 
-postprocessing_output %>%
-  map(~ .x[[2]]) %>%
-  dplyr::bind_rows() %>%
-  readr::write_tsv(ends_outfile, col_names = F)
+  postprocessing_output %>%
+    map(~ .x[[2]]) %>%
+    dplyr::bind_rows() %>%
+    readr::write_tsv(ends_outfile, col_names = F)
+} else {
+  postprocessing_output %>%
+    map(~ .x[[1]]) %>%
+    dplyr::bind_rows() %>%
+    readr::write_tsv(output_file)
 
+  postprocessing_output %>%
+    map(~ .x[[2]]) %>%
+    dplyr::bind_rows() %>%
+    readr::write_tsv(ends_outfile)
+}
 
 print(Sys.time())
 print("Finished!")
 
-write(FINISHED, FINISHED)
+if(log_finish == T) {
+  write(FINISHED, FINISHED)
+}
