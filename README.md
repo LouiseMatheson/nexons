@@ -117,7 +117,7 @@ It can be run across multiple genes (ie nexons output files) together, but since
 ### Optional arguments
 
 | Argument (default) | Description |
----------------------------
+|-------------------|--------|
 | -o OUTFILE (nexons_output_refined.txt) | The file to write the output count table to  |
 | -q ENDS_OUTFILE (OUTFILE + '_completeEnds' tag) | The file to write the collated/quantitated read start and ends to  |
 | -f FLEXIBILITY (5) | Maximum difference between exon boundaries for splice patterns to be merged (applies to individual coordinates: as long as differences for all sites are within the flexibility, the splice patterns will be merged). Should be the same as was used for nexons.py |
