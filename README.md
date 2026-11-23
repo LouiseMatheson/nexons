@@ -137,9 +137,58 @@ It can be run across multiple genes (ie nexons output files) together, but since
 
 ### Output
 
-Identical to nexons.py txt output but with additional columns
+The main output file (OUTFILE above) contains the same columns as the txt output from nexons.py, with additional columns as follows:
 
-completeEnds output...
+| Column  | Contents |
+|---------|----------|
+| shortIntron_nIsoform | Number of splice patterns that have been collated into this isoform following removal of introns shorter than the minimum width allowed |
+| shortIntron_count | Total count coming from splice patterns that contained short introns (this will also have been added to the overall Count column, thus allows the proportion of reads coming from the collated, modified splice patterns to be assessed) |
+| shortIntron_nUnique | Number of distinct short introns found within the collated splice patterns |
+| shortIntron_minWidth | Minimum width of the short introns found and removed |
+| shortIntron_maxWidth | Maximum width of the short introns found and removed |
+| MissingExonIntron_TranscriptID | Transcript ID of any annotated isoform(s) that match the splice pattern, except for the omission of a short intron or exon (below the defined thresholds), separated by '_' if > 1 |
+| MissingExons | Coordinates of missing exons: exons for each transcript ID above are listed in the same order, separated by '_'; if more than one exon is missing, these are separated by ';'. 'NA' indicates no exons were missing (only intron(s)). | 
+| MissingExonWidths | Width(s) of the missing exons, ordered and separated as for 'MissingExons' |
+| MissingFirstLastExon | TRUE/FALSE for whether at least one of the missing exons is at the start or end of the transcript; separated by '_' for each of the missing exon/intron transcript IDs |
+| MissingIntrons | Coordinates of missing introns, ordered and separated as for 'MissingExons' |
+| MissingIntronWidths | Width(s) of missing introns, ordered and separated as for 'MissingExons' |
+| Overlapping | Whether the splice pattern is likely to originate from a different gene, which overlaps or is within the defined distance (see above) from this gene, based on matching splice junctions and relative overlaps between the read and genes. 'likely_overlapping' indicates the splice pattern is a better match to the overlapping gene; 'possible_overlapping' indicates that there are shared splice junctions with the overlapping gene but more shared with the original gene, or no clear evidence from splice junctions or relative overlap; 'none' indicates that the original gene is a better match, or no genes within the defined distance (and on the same strand) were found. |
+| OverlappingGene | The overlapping/nearby gene(s) from which reads were found to be likely or possibly originating from; otherwise 'none' |
+| SpliceMatch | 'all', 'partial' or 'none' indicates whether all/some of the splice donors/acceptors within the splice pattern are annotated. If no splice junctions are present in the splice pattern, 'single_exon'. |
+| ReadLocation | Annotation for the transcript feature(s) overlapped by the read. 'complete_tx' indicates the read starts within the first exon, and ends within the last exon, of an annotated transcript (this does not necessarily indicate a matching splice pattern); 'complete_tx_singleExon' indicates that it is fully within an annotated single exon isoform (although the read may contain introns). 'exon', 'intron' or 'outside' indicate that the read is fully within a single exon or intron, or outside of the annotated gene coordinates. 'exon_intron_exon' or 'intron_exon_intron' indicate that the read starts and ends in an exon or intron, respectively, spanning at least one intron or exon in between. 'exon_intron', 'exon_outside' and 'exon_intron_outside' indicate that these features are spanned by the read, but do not necessarily show the order. |
+| n_junctions | Number of splice junctions within the isoform |
+| TruncationOrigin | If the splice pattern is completely contained within another splice pattern for this gene, ie is a potential truncation product, a comma-separated list of the transcript IDs for those longer splice patterns; otherwise 'none' |
+| TruncationStartEndScore | Percentage of reads that terminate before, or within 10 nt of, the splice donor/acceptor that would be used if the read represents a truncation of a longer isoform. Comma separated list for each unique combination of donor/acceptor (where only one end is truncated, the range extends to 0 or Inf at the other end). High score indicates high likelihood that the read represents a truncation, eg 100 indicates that 100% of reads terminate before reaching the next end of the exon. | 
+| TruncationScoreMax | Maximum truncation score across all potential truncation origins | 
+| TruncationScoreMin | Minimum truncation score across all potential truncation origins |
+| TruncationAnnoScore | Comma separated list of truncation scores for any potential truncation origin that is an annotated transcript isoform |
+| TruncationAnnoScoreMax | Maximum truncation score across annotated truncation origins |
+| TruncationAnnoScoreMin | Minimum truncation score across annotated truncation origins |
+| TxEndsWithinTrunc | TRUE/FALSE for whether there is an annotated transcription start/end site before reaching at least one of the splice donor/acceptors used by potential truncation origins. If TRUE, a high truncation score may be less likely to indicate that the transcript is truly truncated (especially if DefinedStart/End is also high) |
+| TxEndsWithinAnnoTrunc | TRUE/FALSE for whether there is an annotated transcription start/end site before reaching at least one of the splice donor/acceptors used by annotated potential truncation origins |
+| TruncationType | 'threeprime', 'fiveprime' or 'both', to indicate which end is missing. If different truncation origins are truncated at different ends, all possible values will be listed (although not matched) |
+| TruncationTypeAnno | As above but only for annotated truncation origins |
+| StartEndProportions | For combinations of read start/end coordinates that are above the defined ENDPROPORTION, the proportion of reads that start/end at these positions. List of format 'start-end:proportion' separated by '_' for different start/end combinations |
+| DefinedStart | Proportion of reads for which the start is within ENDFLEXQUANT of one of the identified common start sites (ie, is not labelled 'unclear'), and does not lie within 10 nt of a splice acceptor used by a potential 5' truncation origin. A high score indicates that read starts accumulate at specific positions, but are not generated just by loss of the subsequent exon, and are thus more likely to represent true start sites rather than truncation. |
+| DefinedEnd | As above but for read ends |
+| TranscriptProportions | For annotated transcript isoforms, proportion of reads whether the start and end sites are within ENDFLEXQUANT of the annotated start and end sites. Where more than one isoform shares the same splice pattern but differs in start/end coordinates, all are listed, separated by '_' |
+
+
+For the summarised transcript start/ends (ENDS_OUTFILE), the output contains the following columns:
+
+| Column  | Contents |
+|---------|----------|
+| GeneName  | Gene name (if no name in GTF, gene ID) |
+| TranscriptID | Transcript ID assigned to this splice pattern. Either derived from the GTF file if the splice pattern is annotated, or 'Variant' followed by a number. If more than one annotated isoform shares an identical splice pattern, all will be listed, separated by ':' |
+| Start | Mapping coordinate of read start (or 'unclear' for reads > ENDFLEXQUANT from one of the identified common starts) |
+| End | Mapping coordinate of read end (or 'unclear' for reads > ENDFLEXQUANT from one of the identified common starts) |
+| SplicePattern | Coordinates of splice pattern. Read start/end coordinates are omitted; splice junctions are separate by ':'; exon start/end coordinates by '-'. Coordinates are provided from 5'-3' with respect to the transcript. |
+| File    | Name of input BAM file |
+followed by a number. If more than one annotated isoform shares an identical splice pattern, all will be listed, separated by ':' |
+| Count | Number of reads utilising this read start/end combination |
+| TranscriptEndMatch | Transcript ID of annotated transcript(s) matching this read start/end and splice pattern |
+| Proportion | Proportion of reads in this sample, for this transcript isoform, that use this read start/end combination |
+
 
 
 ## nexons_postprocessing.sh
