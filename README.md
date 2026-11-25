@@ -184,7 +184,6 @@ For the summarised transcript start/ends (ENDS_OUTFILE), the output contains the
 | End | Mapping coordinate of read end (or 'unclear' for reads > ENDFLEXQUANT from one of the identified common starts) |
 | SplicePattern | Coordinates of splice pattern. Read start/end coordinates are omitted; splice junctions are separate by ':'; exon start/end coordinates by '-'. Coordinates are provided from 5'-3' with respect to the transcript. |
 | File    | Name of input BAM file |
-followed by a number. If more than one annotated isoform shares an identical splice pattern, all will be listed, separated by ':' |
 | Count | Number of reads utilising this read start/end combination |
 | TranscriptEndMatch | Transcript ID of annotated transcript(s) matching this read start/end and splice pattern |
 | Proportion | Proportion of reads in this sample, for this transcript isoform, that use this read start/end combination |
